@@ -4,7 +4,12 @@ ftnt\_license\_registration - extract, register, and download Fortinet licenses.
 
 # VERSION
 
-version .3
+version .4
+
+# PYTHON
+Fast GPT conversion of the perl .3 version to Python version.
+   As ftnt_license_registration.py
+
 
 # SYNOPSIS
 
