@@ -3,7 +3,6 @@
 """
 ## Converted from perl to Python
 ## By David Thomson @ 20250514
-## Version 3.0
 
 Please install these libraries first:
 
@@ -22,9 +21,6 @@ import requests
 from PyPDF2 import PdfReader
 from io import BytesIO
 
-import urllib.parse
-
-
 def log_output(*args):
     print(colored('- ', 'green', attrs=['bold']) + ' '.join(map(str, args)), file=sys.stderr)
 
@@ -42,53 +38,18 @@ def extract_reg_codes(zip_files):
         try:
             with ZipFile(zip_file, 'r') as zip_ref:
                 for pdf_name in zip_ref.namelist():
-                    if not pdf_name.lower().endswith('.pdf'):
-                        continue
-                    
-                    log_output(f"Processing PDF: {pdf_name}")
                     pdf_content = zip_ref.read(pdf_name)
-                    
-                    try:
-                        pdf = PdfReader(BytesIO(pdf_content))
-                        
-                        # Check first 3 pages
-                        for page_num in range(min(3, len(pdf.pages))):
-                            text = pdf.pages[page_num].extract_text()
-                            
-                            patterns = [
-                                r'CONTRACT REGISTRATION CODE\s*:?\s*((\w{5}-){4}\w{6})',
-                                r'CONTRACT REGISTRATION CODE\s*:?\s*(\S+)',
-                                r'Registration Code\s*:\s*((\w{5}-){4}\w{6})',
-                                r'Registration Code\s*:\s*(\S+)',
-                                r'Registration\s+Code[:\s]+([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{6})'
-                            ]
-                            
-                            for pattern in patterns:
-                                match = re.search(pattern, text, re.IGNORECASE)
-                                if match:
-                                    registration_code = match.group(1)
-                                    log_output(f"Extracted code {registration_code} from page {page_num + 1}")
-                                    codes.append(registration_code)
-                                    break
-                            
-                            if match:
-                                break  # Stop checking pages if we found a code
-                        
-                        if not match:
-                            log_warning(f"Error extracting code from '{pdf_name}'")
-                            # Debug output
-                            log_warning("First 500 characters of extracted text from each page:")
-                            for page_num in range(min(3, len(pdf.pages))):
-                                log_warning(f"Page {page_num + 1}:")
-                                log_warning(pdf.pages[page_num].extract_text()[:500])
-                                log_warning("---")
-                    
-                    except Exception as e:
-                        log_warning(f"Error processing PDF {pdf_name}: {str(e)}")
-                        
-        except Exception as e:
-            log_warning(f"Error processing zip file {zip_file}: {str(e)}")
-    
+                    pdf = PdfReader(BytesIO(pdf_content))
+                    text = pdf.pages[0].extract_text()
+                    match = re.search(r'Registration Code\s+:\s+((\w{5}-){4}(\w{6}))', text)
+                    if match:
+                        registration_code = match.group(1)
+                        log_output(f"Extracted code {registration_code}")
+                        codes.append(registration_code)
+                    else:
+                        log_warning(f"Error extracting code from '{pdf_name}'")
+        except:
+            log_warning(f"{zip_file} does not appear to be a valid zip file, skipping...")
     return codes
 
 def dotfile_creds():
@@ -126,51 +87,24 @@ def license_ipv4_addresses(ip_or_file, n_codes):
             return []
 
 def forticare_auth(credentials):
-    # Strip any leading/trailing whitespace from credentials
-    username = credentials['username'].strip()
-    password = credentials['password'].strip()
-    client_id = credentials['client_id'].strip()
-
     auth_info = {
         'uri': 'https://customerapiauth.fortinet.com/api/v1/oauth/token/',
-        'data': {
-            'username': username,
-            'password': password,
-            'client_id': client_id,
+        'json': {
+            'username': credentials['username'],
+            'password': credentials['password'],
+            'client_id': credentials['client_id'],
             'grant_type': 'password'
         }
     }
     
-    log_output(f"Attempting authentication for user: {username}")
-    log_output(f"Using client_id: {client_id}")
+    res = requests.post(auth_info['uri'], json=auth_info['json'])
     
-    try:
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'FortinetLicenseRegistration/1.0'
-        }
-        res = requests.post(auth_info['uri'], data=auth_info['data'], headers=headers)
-        res.raise_for_status()  # This will raise an exception for HTTP errors
-        
-        log_output("Authentication Success")
-        return res.json()['access_token']
-    except requests.exceptions.RequestException as e:
-        log_error(f"Authentication Error: {str(e)}")
-        if res.status_code == 401:
-            log_error("This usually indicates incorrect username or password.")
-        elif res.status_code == 400:
-            log_error("This could indicate a problem with the client_id, grant type, or request format.")
-        
-        log_error("Response content:")
-        log_error(res.text)
-        
-        # Additional debugging information
-        log_error("Request details:")
-        log_error(f"URL: {auth_info['uri']}")
-        log_error(f"Headers: {headers}")
-        log_error(f"Data: username={username}, password=******, client_id={client_id}, grant_type=password")
-        
-        sys.exit(1)
+    if res.status_code != 200:
+        msg = res.json().get('oauth', {}).get('message') or res.json().get('error_message') or res.json().get('error_description', "Unknown Error")
+        log_error(f"Authentication Error: {msg}")
+    
+    log_output("Authentication Success")
+    return res.json()['access_token']
 
 def forticare_register(access_token, reg_codes, ipv4_addresses):
     licenses = []
@@ -231,7 +165,6 @@ def main():
     parser.add_argument('-l', '--license-dir', help='Path to save registered licenses')
     parser.add_argument('-n', '--no-licenses', action='store_true', help="Don't download licenses")
     parser.add_argument('-i', '--ipv4-addresses', help='Assign IPv4 addresses when registering')
-    parser.add_argument('--client-id', default='assetmanagement', help='Client ID for authentication')
     args = parser.parse_args()
 
     codes = extract_reg_codes(args.zip_files)
@@ -242,18 +175,12 @@ def main():
 
     dotfile_creds_data = dotfile_creds()
     credentials = {
-        'username': (dotfile_creds_data.get('username') or args.username or os.environ.get('FORTICLOUD_API_USER')).strip(),
-        'password': (dotfile_creds_data.get('password') or args.password or os.environ.get('FORTICLOUD_API_PASSWORD') or os.environ.get('FORTICARE_API_PASSWORD')).strip(),
-        'client_id': args.client_id.strip()
+        'username': dotfile_creds_data.get('username') or args.username or os.environ.get('FORTICLOUD_API_USER'),
+        'password': dotfile_creds_data.get('password') or args.password or os.environ.get('FORTICLOUD_API_PASSWORD') or os.environ.get('FORTICARE_API_PASSWORD'),
+        'client_id': args.client_id
     }
 
-    log_output("Using credentials:")
-    log_output(f"Username: {credentials['username']}")
-    log_output(f"Password: {'*' * len(credentials['password'])}")
-    log_output(f"Client ID: {credentials['client_id']}")
-
     access_token = forticare_auth(credentials)
-    
     licenses = forticare_register(access_token, codes, ipv4_addresses)
 
     if not args.no_licenses:

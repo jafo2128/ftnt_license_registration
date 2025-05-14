@@ -126,30 +126,21 @@ def license_ipv4_addresses(ip_or_file, n_codes):
             return []
 
 def forticare_auth(credentials):
-    # Strip any leading/trailing whitespace from credentials
-    username = credentials['username'].strip()
-    password = credentials['password'].strip()
-    client_id = credentials['client_id'].strip()
-
     auth_info = {
         'uri': 'https://customerapiauth.fortinet.com/api/v1/oauth/token/',
-        'data': {
-            'username': username,
-            'password': password,
-            'client_id': client_id,
+        'json': {
+            'username': urllib.parse.quote(credentials['username']),
+            'password': urllib.parse.quote(credentials['password']),
+            'client_id': credentials['client_id'],
             'grant_type': 'password'
         }
     }
     
-    log_output(f"Attempting authentication for user: {username}")
-    log_output(f"Using client_id: {client_id}")
+    log_output(f"Attempting authentication for user: {credentials['username']}")
+    log_output(f"Using client_id: {credentials['client_id']}")
     
     try:
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'FortinetLicenseRegistration/1.0'
-        }
-        res = requests.post(auth_info['uri'], data=auth_info['data'], headers=headers)
+        res = requests.post(auth_info['uri'], json=auth_info['json'])
         res.raise_for_status()  # This will raise an exception for HTTP errors
         
         log_output("Authentication Success")
@@ -159,16 +150,10 @@ def forticare_auth(credentials):
         if res.status_code == 401:
             log_error("This usually indicates incorrect username or password.")
         elif res.status_code == 400:
-            log_error("This could indicate a problem with the client_id, grant type, or request format.")
+            log_error("This could indicate a problem with the client_id or grant type.")
         
         log_error("Response content:")
         log_error(res.text)
-        
-        # Additional debugging information
-        log_error("Request details:")
-        log_error(f"URL: {auth_info['uri']}")
-        log_error(f"Headers: {headers}")
-        log_error(f"Data: username={username}, password=******, client_id={client_id}, grant_type=password")
         
         sys.exit(1)
 
@@ -231,7 +216,6 @@ def main():
     parser.add_argument('-l', '--license-dir', help='Path to save registered licenses')
     parser.add_argument('-n', '--no-licenses', action='store_true', help="Don't download licenses")
     parser.add_argument('-i', '--ipv4-addresses', help='Assign IPv4 addresses when registering')
-    parser.add_argument('--client-id', default='assetmanagement', help='Client ID for authentication')
     args = parser.parse_args()
 
     codes = extract_reg_codes(args.zip_files)
@@ -242,9 +226,9 @@ def main():
 
     dotfile_creds_data = dotfile_creds()
     credentials = {
-        'username': (dotfile_creds_data.get('username') or args.username or os.environ.get('FORTICLOUD_API_USER')).strip(),
-        'password': (dotfile_creds_data.get('password') or args.password or os.environ.get('FORTICLOUD_API_PASSWORD') or os.environ.get('FORTICARE_API_PASSWORD')).strip(),
-        'client_id': args.client_id.strip()
+        'username': dotfile_creds_data.get('username') or args.username or os.environ.get('FORTICLOUD_API_USER'),
+        'password': dotfile_creds_data.get('password') or args.password or os.environ.get('FORTICLOUD_API_PASSWORD') or os.environ.get('FORTICARE_API_PASSWORD'),
+        'client_id': args.client_id
     }
 
     log_output("Using credentials:")
@@ -253,7 +237,6 @@ def main():
     log_output(f"Client ID: {credentials['client_id']}")
 
     access_token = forticare_auth(credentials)
-    
     licenses = forticare_register(access_token, codes, ipv4_addresses)
 
     if not args.no_licenses:
