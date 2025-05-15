@@ -3,7 +3,7 @@
 """
 ## Converted from perl to Python
 ## By David Thomson @ 20250514
-## Version 8.0
+## Version 7.0
 
 Please install these libraries first:
 
@@ -27,8 +27,6 @@ from io import BytesIO
 
 import csv
 from tabulate import tabulate
-import re
-from datetime import datetime
 
 import urllib.parse
 
@@ -45,37 +43,21 @@ def log_warning(*args):
 
 def create_and_display_csv(codes, output_file='extracted_codes.csv'):
     # Prepare the data
-    headers = ['ZIP File', 'PDF Name', 'Issue Date', 'Purchase Order', 'Registration Code', 'Qty', 'Part Number', 'Description']
-    data = [headers]
-    
+    data = [['ZIP File', 'PDF Name', 'Registration Code']]
     for code_info in codes:
-        row = [
-            code_info.get('zip_file', ''),
-            code_info.get('pdf_name', ''),
-            code_info.get('issue_date', ''),
-            code_info.get('purchase_order', ''),
-            code_info.get('registration_code', ''),
-            code_info.get('qty', ''),
-            code_info.get('part_number', ''),
-            code_info.get('description', '')
-        ]
-        data.append(row)
-        
-        # Debug output for each row
-        log_output("\nRow being added to CSV:")
-        for header, value in zip(headers, row):
-            log_output(f"{header}: {value}")
+        data.append([code_info['zip_file'], code_info['pdf_name'], code_info['code']])
     
-    # Write to CSV with UTF-8 encoding
-    with open(output_file, 'w', newline='', encoding='utf-8') as f:
+    # Write to CSV
+    with open(output_file, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerows(data)
     
-    log_output(f"\nCSV file created: {output_file}")
+    log_output(f"CSV file created: {output_file}")
     
     # Display on console
-    print("\nExtracted Information:")
-    print(tabulate(data[1:], headers=headers, tablefmt="grid"))
+    headers = data.pop(0)
+    print("\nExtracted Registration Codes:")
+    print(tabulate(data, headers=headers, tablefmt="grid"))
 
 def extract_reg_codes(zip_files):
     codes = []
@@ -92,67 +74,41 @@ def extract_reg_codes(zip_files):
                     
                     try:
                         pdf = PdfReader(BytesIO(pdf_content))
-                        info = {}
+                        registration_code = None
                         
-                        # Check first 2 pages
-                        for page_num in range(min(2, len(pdf.pages))):
+                        # Check first 3 pages
+                        for page_num in range(min(3, len(pdf.pages))):
                             text = pdf.pages[page_num].extract_text()
                             
-                            # Debug: Print the exact text we're working with
-                            log_output(f"\nPage {page_num + 1} Content:")
-                            log_output("=" * 50)
-                            log_output(text)
-                            log_output("=" * 50)
-                            
-                            # Try multiple date patterns
-                            date_patterns = [
-                                r'Issue\s*Date\s*:\s*((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4})',
-                                r'Issue\s*Date\s*:\s*(\w+\s+\d{1,2},?\s*\d{4})',
-                                r'IssueDate\s*:\s*(\w+\s*\d{1,2},?\s*\d{4})'
+                            patterns = [
+                                r'CONTRACT REGISTRATION CODE\s*:?\s*((?:\w{5}-){4}\w{6})',
+                                r'Registration Code\s*:\s*((?:\w{5}-){4}\w{6})',
+                                r'Registration\s+Code[:\s]+([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{6})'
                             ]
                             
-                            for pattern in date_patterns:
-                                date_match = re.search(pattern, text, re.IGNORECASE)
-                                if date_match:
-                                    info['issue_date'] = date_match.group(1).strip()
-                                    log_output(f"Found Issue Date: {info['issue_date']}")
+                            for pattern in patterns:
+                                match = re.search(pattern, text, re.IGNORECASE)
+                                if match:
+                                    registration_code = match.group(1)  # Get the actual code
+                                    log_output(f"Extracted code {registration_code} from page {page_num + 1}")
+                                    codes.append({
+                                        'zip_file': os.path.basename(zip_file),
+                                        'pdf_name': pdf_name,
+                                        'code': registration_code
+                                    })
                                     break
                             
-                            # Try multiple registration code patterns
-                            code_patterns = [
-                                r'Contract\s*Registration\s*Code\s*:\s*([A-Z0-9]{4,})',
-                                r'Contract\s*Registration\s*Code:([A-Z0-9]{4,})',
-                                r'Registration\s*Code\s*:\s*([A-Z0-9]{4,})'
-                            ]
-                            
-                            for pattern in code_patterns:
-                                code_match = re.search(pattern, text, re.IGNORECASE)
-                                if code_match:
-                                    info['registration_code'] = code_match.group(1).strip()
-                                    log_output(f"Found Registration Code: {info['registration_code']}")
-                                    break
-                            
-                            po_match = re.search(r'Purchase\s*Order\s*Number\s*:\s*(\d+)', text, re.IGNORECASE)
-                            if po_match:
-                                info['purchase_order'] = po_match.group(1).strip()
-                                log_output(f"Found Purchase Order: {info['purchase_order']}")
-                            
-                            qty_match = re.search(r'Qty\s*Part\s*Number.*?\n(\d+)\s+([\w-]+)\s+(.*?)(?=\n\d|\Z)', text, re.DOTALL | re.IGNORECASE)
-                            if qty_match:
-                                info['qty'] = qty_match.group(1).strip()
-                                info['part_number'] = qty_match.group(2).strip()
-                                info['description'] = qty_match.group(3).replace('\n', ' ').strip()
-                                log_output(f"Found Qty: {info['qty']}, Part Number: {info['part_number']}")
+                            if registration_code:
+                                break  # Stop checking pages if we found a code
                         
-                        if info:
-                            info['zip_file'] = os.path.basename(zip_file)
-                            info['pdf_name'] = pdf_name
-                            log_output("\nExtracted Information:")
-                            for key, value in info.items():
-                                log_output(f"{key}: {value}")
-                            codes.append(info)
-                        else:
-                            log_warning(f"No information extracted from '{pdf_name}'")
+                        if not registration_code:
+                            log_warning(f"Error extracting code from '{pdf_name}'")
+                            # Debug output
+                            log_warning("First 500 characters of extracted text from each page:")
+                            for page_num in range(min(3, len(pdf.pages))):
+                                log_warning(f"Page {page_num + 1}:")
+                                log_warning(pdf.pages[page_num].extract_text()[:500])
+                                log_warning("---")
                     
                     except Exception as e:
                         log_warning(f"Error processing PDF {pdf_name}: {str(e)}")
@@ -161,6 +117,7 @@ def extract_reg_codes(zip_files):
             log_warning(f"Error processing zip file {zip_file}: {str(e)}")
     
     return codes
+
 
 def dotfile_creds():
     cred_path = os.path.expanduser('~/.ftnt/ftnt_cloud_api')
@@ -308,11 +265,11 @@ def main():
 
     extracted_info = extract_reg_codes(args.zip_files)
     if not extracted_info:
-        log_error("No information found, exiting")
+        log_error("No codes found, exiting")
 
     create_and_display_csv(extracted_info, args.output_csv)
 
-    codes = [info['registration_code'] for info in extracted_info if 'registration_code' in info]
+    codes = [info['code'] for info in extracted_info]
     ipv4_addresses = license_ipv4_addresses(args.ipv4_addresses, len(codes))
 
     dotfile_creds_data = dotfile_creds()
