@@ -18,3 +18,22 @@ REF:
 me@me.com
 1274448 / me
 
+{
+    "username": "IAM API username",
+
+    "password": "IAM API password",
+
+    "client_id": "assetmanagement",
+    
+    "grant_type": "password"
+}
+
+python C:\david\Dev\GitHub\jafo2128\ftnt_license_registration\ftnt_license_registration.py -u '68E3B49C-EAEA-4A07-A0C0-A47B32961574' -p 'fc4f42c88eac146f7eb4ed022457d4b5!1Aa' -l C:\david\Inprogress\Core\license\20250514 -o IranIt.csv -c 'assetmanagement' FC3-10-FGVVS-990-02-36_99438909.zip
+
+
+current call looks like this :
+
+python ftnt_license_registration.py -u '68E3B49C-EAEA-4A07-A0C0-A47B32961574' -p 'fc4f42c88eac146f7eb4ed022457d4b5!1Aa' -l C:\david\Inprogress\Core\license\20250514 -o IranIt.csv -c 'assetmanagement' C:\david\Inprogress\Core\license\20250514\test\0326HM425917.zip
+
+
+

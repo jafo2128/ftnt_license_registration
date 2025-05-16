@@ -3,7 +3,7 @@
 """
 ## Converted from perl to Python
 ## By David Thomson @ 20250514
-## Version 8.0
+## Version 10.0
 
 Please install these libraries first:
 
@@ -244,63 +244,54 @@ def forticare_auth(credentials):
         sys.exit(1)
 
 
+def format_registration_code(code):
+    """Format registration code with hyphens every 4 characters"""
+    # Remove any existing hyphens or spaces
+    code = code.replace('-', '').replace(' ', '')
+    # Insert hyphens every 4 characters
+    return '-'.join([code[i:i+4] for i in range(0, len(code), 4)])
+
 def forticare_register(access_token, reg_codes, ipv4_addresses):
     licenses = []
     ua = requests.Session()
 
-    for original_code in reg_codes:
-        log_output(f"Processing code {original_code}")
+    for code in reg_codes:
+        original_code = code
+        formatted_code = format_registration_code(code)
         
-        # Try different formats of the code
-        code_variations = [
-            original_code,
-            original_code.replace("-", ""),  # Remove hyphens if present
-            original_code.replace(" ", ""),  # Remove spaces if present
-            original_code.upper(),  # Try all uppercase
-            original_code.lower()   # Try all lowercase
-        ]
-        
-        for code in code_variations:
-            log_output(f"Attempting registration with code: {code}")
+        for current_code in [original_code, formatted_code]:
+            log_output(f"Attempting to register code: {current_code}")
             
             current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Try different request structures
-            request_variations = [
-                {"licenseRegistrationCode": code},
-                {
-                    "licenseRegistrationCode": code,
-                    "registrationUnits": [
-                        {
-                            "serialNumber": code,
-                            "description": f"Auto NetOPS Registered {current_date}",
-                            "isGovernment": False
-                        }
-                    ]
-                },
-                {"registrationCode": code},  # Try a different field name
-                {"code": code}  # Try a simple structure
-            ]
-            
-            for request_json in request_variations:
-                log_output(f"Sending request to API: {json.dumps(request_json, indent=2)}")
-                
-                try:
-                    res = ua.post(
-                        'https://support.fortinet.com/ES/api/registration/v3/licenses/register',
-                        headers={
-                            'Authorization': f'Bearer {access_token}',
-                            'Content-Type': 'application/json'
-                        },
-                        json=request_json
-                    )
-                    res.raise_for_status()
+            request_json = {
+                "licenseRegistrationCode": current_code,
+                "isGovernment": False,
+                "description": f"Auto NetOPS Registered {current_date}",
+                "registrationUnits": [
+                    {
+                        "serialNumber": current_code,
+                        "description": f"Auto NetOPS Registered {current_date}"
+                    }
+                ]
+            }
 
+            log_output(f"Sending request to API: {json.dumps(request_json, indent=2)}")
+
+            try:
+                res = ua.post(
+                    'https://support.fortinet.com/ES/api/registration/v3/licenses/register',
+                    headers={
+                        'Authorization': f'Bearer {access_token}',
+                        'Content-Type': 'application/json'
+                    },
+                    json=request_json
+                )
+                
+                if res.status_code == 200:
                     license_data = res.json()
                     log_output(f"API Response: {json.dumps(license_data, indent=2)}")
-
+                    
                     if 'error' not in license_data:
-                        # Successful registration
                         license_info = {
                             'sku': license_data.get('assetDetails', {}).get('license', {}).get('licenseSKU', ''),
                             'file': license_data.get('assetDetails', {}).get('license', {}).get('licenseFile', ''),
@@ -308,27 +299,18 @@ def forticare_register(access_token, reg_codes, ipv4_addresses):
                         }
                         log_output(f"Successfully registered {license_info['sku']} ({license_info['serial']})")
                         licenses.append(license_info)
-                        break  # Exit the request variations loop
+                        break  # Success, no need to try the other format
                     else:
                         log_warning(f"API returned an error: {license_data['error'].get('message', 'Unknown error')}")
+                else:
+                    log_warning(f"API Error for code {current_code}: {res.status_code}")
+                    log_warning(f"Response content: {res.text}")
 
-                except requests.exceptions.RequestException as e:
-                    log_warning(f"API Error for code {code}: {str(e)}")
-                    if hasattr(e, 'response') and e.response is not None:
-                        log_warning(f"Response content: {e.response.text}")
-                        try:
-                            error_json = e.response.json()
-                            log_warning(f"Detailed error information: {json.dumps(error_json, indent=2)}")
-                        except:
-                            pass
-            else:
-                # If we've tried all variations and none worked
-                log_warning(f"Failed to register code {original_code} after trying all variations")
-                continue
-            
-            # If we've successfully registered, break out of the code variations loop
-            if licenses and licenses[-1]['serial'] == code:
-                break
+            except Exception as e:
+                log_warning(f"Error processing registration for code {current_code}: {str(e)}")
+
+        if not licenses or licenses[-1]['serial'] != original_code:
+            log_warning(f"Failed to register code {original_code} after trying both formats")
 
     return licenses
 

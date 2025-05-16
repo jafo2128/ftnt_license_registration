@@ -3,7 +3,7 @@
 """
 ## Converted from perl to Python
 ## By David Thomson @ 20250514
-## Version 8.0
+## Version 11.0
 
 Please install these libraries first:
 
@@ -244,91 +244,82 @@ def forticare_auth(credentials):
         sys.exit(1)
 
 
+def format_registration_code(code):
+    """Format registration code with hyphens every 4 characters"""
+    # Remove any existing hyphens or spaces
+    code = code.replace('-', '').replace(' ', '')
+    # Insert hyphens every 4 characters
+    return '-'.join([code[i:i+4] for i in range(0, len(code), 4)])
+
 def forticare_register(access_token, reg_codes, ipv4_addresses):
     licenses = []
     ua = requests.Session()
 
-    for original_code in reg_codes:
-        log_output(f"Processing code {original_code}")
+    for code in reg_codes:
+        log_output(f"Validating code {code}")
         
-        # Try different formats of the code
-        code_variations = [
-            original_code,
-            original_code.replace("-", ""),  # Remove hyphens if present
-            original_code.replace(" ", ""),  # Remove spaces if present
-            original_code.upper(),  # Try all uppercase
-            original_code.lower()   # Try all lowercase
-        ]
-        
-        for code in code_variations:
-            log_output(f"Attempting registration with code: {code}")
-            
-            current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Try different request structures
-            request_variations = [
-                {"licenseRegistrationCode": code},
-                {
-                    "licenseRegistrationCode": code,
-                    "registrationUnits": [
-                        {
-                            "serialNumber": code,
-                            "description": f"Auto NetOPS Registered {current_date}",
-                            "isGovernment": False
-                        }
-                    ]
+        # First, try to validate the license
+        validate_json = {
+            "licenseRegistrationCode": code
+        }
+
+        try:
+            validate_res = ua.post(
+                'https://support.fortinet.com/ES/api/registration/v3/licenses/validate',
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Content-Type': 'application/json'
                 },
-                {"registrationCode": code},  # Try a different field name
-                {"code": code}  # Try a simple structure
-            ]
+                json=validate_json
+            )
             
-            for request_json in request_variations:
-                log_output(f"Sending request to API: {json.dumps(request_json, indent=2)}")
-                
-                try:
-                    res = ua.post(
-                        'https://support.fortinet.com/ES/api/registration/v3/licenses/register',
-                        headers={
-                            'Authorization': f'Bearer {access_token}',
-                            'Content-Type': 'application/json'
-                        },
-                        json=request_json
-                    )
-                    res.raise_for_status()
+            log_output(f"Validation API Response Status: {validate_res.status_code}")
+            log_output(f"Validation API Response Content: {validate_res.text}")
 
-                    license_data = res.json()
-                    log_output(f"API Response: {json.dumps(license_data, indent=2)}")
-
-                    if 'error' not in license_data:
-                        # Successful registration
-                        license_info = {
-                            'sku': license_data.get('assetDetails', {}).get('license', {}).get('licenseSKU', ''),
-                            'file': license_data.get('assetDetails', {}).get('license', {}).get('licenseFile', ''),
-                            'serial': license_data.get('assetDetails', {}).get('serialNumber', '')
-                        }
-                        log_output(f"Successfully registered {license_info['sku']} ({license_info['serial']})")
-                        licenses.append(license_info)
-                        break  # Exit the request variations loop
-                    else:
-                        log_warning(f"API returned an error: {license_data['error'].get('message', 'Unknown error')}")
-
-                except requests.exceptions.RequestException as e:
-                    log_warning(f"API Error for code {code}: {str(e)}")
-                    if hasattr(e, 'response') and e.response is not None:
-                        log_warning(f"Response content: {e.response.text}")
-                        try:
-                            error_json = e.response.json()
-                            log_warning(f"Detailed error information: {json.dumps(error_json, indent=2)}")
-                        except:
-                            pass
-            else:
-                # If we've tried all variations and none worked
-                log_warning(f"Failed to register code {original_code} after trying all variations")
+            if validate_res.status_code != 200:
+                log_warning(f"License validation failed for code {code}")
                 continue
+
+            # If validation successful, proceed with registration
+            log_output(f"License validation successful. Proceeding with registration for code {code}")
+
+            current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            register_json = {
+                "licenseRegistrationCode": code,
+                "description": f"Auto NetOPS Registered {current_date}"
+            }
+
+            register_res = ua.post(
+                'https://support.fortinet.com/ES/api/registration/v3/licenses/register',
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Content-Type': 'application/json'
+                },
+                json=register_json
+            )
             
-            # If we've successfully registered, break out of the code variations loop
-            if licenses and licenses[-1]['serial'] == code:
-                break
+            log_output(f"Registration API Response Status: {register_res.status_code}")
+            log_output(f"Registration API Response Content: {register_res.text}")
+
+            if register_res.status_code == 200:
+                license_data = register_res.json()
+                
+                if 'error' not in license_data:
+                    license_info = {
+                        'sku': license_data.get('assetDetails', {}).get('license', {}).get('licenseSKU', ''),
+                        'file': license_data.get('assetDetails', {}).get('license', {}).get('licenseFile', ''),
+                        'serial': license_data.get('assetDetails', {}).get('serialNumber', '')
+                    }
+                    log_output(f"Successfully registered {license_info['sku']} ({license_info['serial']})")
+                    licenses.append(license_info)
+                else:
+                    log_warning(f"API returned an error: {license_data['error'].get('message', 'Unknown error')}")
+            else:
+                log_warning(f"API Error for code {code}: {register_res.status_code}")
+                log_warning(f"Response content: {register_res.text}")
+
+        except Exception as e:
+            log_warning(f"Error processing registration for code {code}: {str(e)}")
 
     return licenses
 
