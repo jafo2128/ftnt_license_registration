@@ -3,7 +3,7 @@
 """
 ## Converted from perl to Python
 ## By David Thomson @ 20250514
-## Version 8.0
+## Version 12.0
 
 Please install these libraries first:
 
